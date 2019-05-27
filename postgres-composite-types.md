@@ -73,7 +73,7 @@ VALUES
 (4, 1);
 ```
 
-## Querying the Old Way
+## Querying: The Old Way
 
 Now if I wanted to retreive all the information about a class, I formerly would have written a query something like this:
 
@@ -92,25 +92,27 @@ This would give me data something like:
 | 1        | Post... | 1          | Thomas             | Lowry             | 2          | Student            | Two               |
 | 1        | Post... | 1          | Thomas             | Lowry             | 3          | Student            | Three             |
 
-See how we have duplication of data? Not only are the class and teacher represented once for each student, but our list lacks any representation of our data's depth - class, teacher, and student are all lumped together in each node of the list instead of being organized into a heirarchy.
+See how we have redundant, unstructured data? Not only are the class and teacher represented once for each student, but our list lacks any representation of our data's depth - class, teacher, and student are all lumped together in each node of the list instead of being organized into a heirarchy.
 
 ## Composite Types
 
-Let's see how composite types can help us to format this data in a more reasonable structure.
+Let's see how composite types can help us to format this data into a more reasonable structure.
 
-**Note**
+**Note** If you're not familiar with composite types, a composite type is a type that is 'composed' of other types. It allows you to have a single item that may contain other items - essentially it allows a nested structure. Composite types can be composed of built-in SQL types as well as other composite types.
 
-If you're not familiar with composite types, a composite type is a `type` that is 'composed' of other types. Composite types can be composed of built-in SQL types as well as other composite types. You can read more about them in PostgreSQL's [official documentation of composite types](https://www.postgresql.org/docs/10/rowtypes.html).
+You can read more about PostgreSQL composite types in the [official documentation](https://www.postgresql.org/docs/10/rowtypes.html).
 
 To show you how this works, let's create some composite types that mirror our data structure:
 
 ```SQL
+-- A `person` is composed of an `integer` and two `varchar`s titled 'id', 'first_name', and 'last_name', respectively.
 CREATE TYPE person AS (
     id INTEGER,
     first_name VARCHAR(50),
     last_name VARCHAR(50)
 );
 
+-- Likewise, a `class` is composed of an `integer`, a `varchar`, a `person`, and a `person[]` array, titled 'id', 'subject', 'teacher', and 'students', respectively.
 CREATE TYPE class AS (
     id INTEGER,
     subject VARCHAR(50),
@@ -124,9 +126,13 @@ Notice how this structure somewhat resembles our tables, with a few key differen
 1. In place of a one-to-many relationship (a single foreign key), we simply nest a teacher within a class.
 2. In place of a many-to-many relationship (a join table), we simply nest an array of students within a class.
 
-## Function Signature
+**Note** 
+
+## Querying: The New Way
 
 Now we're ready to create a function that will output an entire class in the structure that we've defined using our composite types.
+
+## Function Signature
 
 There are a few steps to this, so let's start with a function signature that takes in a class id and returns a class:
 
@@ -147,10 +153,12 @@ Now we'll need to define the variables we will use in order to retreive each key
 ```SQL
 CREATE OR REPLACE FUNCTION read_entire_class(cid INTEGER)
 RETURNS class AS $$
+----------
 DECLARE
     subject TEXT;
     teacher PERSON;
     students PERSON[];
+----------
 BEGIN
 END;
 $$ LANGUAGE plpgsql;
@@ -169,12 +177,14 @@ DECLARE
     students PERSON[];
 BEGIN
 
+----------
     RETURN ROW(     -- ROW() function to create composite
         id,         -- these must be in correct order
         subject,
         teacher,
         students
     )::class;       -- explicit type casting
+----------
 END;
 $$ LANGUAGE plpgsql;
 ```
@@ -204,9 +214,11 @@ DECLARE
     students PERSON[];
 BEGIN
 
+----------
     SELECT c.subject FROM classes c   -- selects `subject` from classes
     INTO subject                      -- assigns query result to variable `subject`
     WHERE c.id = cid;
+----------
 
     RETURN ROW(
         cid,
@@ -229,7 +241,9 @@ CREATE OR REPLACE FUNCTION read_entire_class(cid INTEGER)
 RETURNS class AS $$
 DECLARE
     subject TEXT;
+----------
     tid INTEGER; -- add teacher id variable
+----------
     teacher PERSON;
     students PERSON[];
 BEGIN
@@ -238,6 +252,7 @@ BEGIN
     INTO subject
     WHERE c.id = cid;
 
+----------
     -- EITHER --------
     SELECT t.id, t.first_name, t.last_name FROM people t
     INTO teacher
@@ -254,6 +269,7 @@ BEGIN
     INTO teacher
     WHERE t.id = tid;
     -- END OR ----
+----------
 
     RETURN ROW(
         cid,
@@ -269,7 +285,7 @@ There's not much new here, just a potential subquery to get the teacher of the c
 
 ### Students
 
-Now we just need to get the students. This one is quite a bit more difficult, since we're dealing with a list of students. Here's how you do it:
+Now we just need to get the students. This one is a bit more difficult, since we're dealing with a list of students. Here's how you do it:
 
 ```SQL
 CREATE OR REPLACE FUNCTION read_entire_class(cid INTEGER)
@@ -291,12 +307,14 @@ BEGIN
         WHERE c.id = cid
     );
 
+----------
     SELECT ARRAY_AGG(ROW(s.id, s.first_name, s.last_name)::person) FROM people s
     INTO students
     WHERE s.id IN (
         SELECT e.student_id FROM student_class_enrollments e
         WHERE e.class_id = cid
     );
+----------
 
     RETURN ROW(
         cid,
