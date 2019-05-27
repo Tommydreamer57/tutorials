@@ -9,10 +9,14 @@ However, using composite types (a feature that only exists in Postgres, if I am 
 
 Please note that I'm not talking about STORING data in a composite type (which has its own much more limited use-case), I'm rather talking about using composite types as INPUTS and OUTPUTS of a query.
 
-Let's use my go-to example of a schema representing classes in a school.
+## Sample Schema
+
+My go-to example-schema is one that represents classes in a school.
 
 Here's a simple schema to capture classes, students, teachers, and enrollments:
 (Note how students and teachers are both stored in the table "people")
+
+### Tables
 
 ```SQL
 CREATE TABLE people (
@@ -33,6 +37,8 @@ CREATE TABLE student_class_enrollments (
     UNIQUE (student_id, cid)
 );
 ```
+
+### Sample Data
 
 Let's create a class just so we have something to query:
 
@@ -67,6 +73,8 @@ VALUES
 (4, 1);
 ```
 
+## Querying the Old Way
+
 Now if I wanted to retreive all the information about a class, I formerly would have written a query something like this:
 
 ```SQL
@@ -85,6 +93,8 @@ This would give me data something like:
 | 1        | Post... | 1          | Thomas             | Lowry             | 3          | Student            | Three             |
 
 See how we have duplication of data? Not only are the class and teacher represented once for each student, but our list lacks any representation of our data's depth - class, teacher, and student are all lumped together in each node of the list instead of being organized into a heirarchy.
+
+## Composite Types
 
 Let's see how composite types can help us to format this data in a more reasonable structure.
 
@@ -114,6 +124,8 @@ Notice how this structure somewhat resembles our tables, with a few key differen
 1. In place of a one-to-many relationship (a single foreign key), we simply nest a teacher within a class.
 2. In place of a many-to-many relationship (a join table), we simply nest an array of students within a class.
 
+## Function Signature
+
 Now we're ready to create a function that will output an entire class in the structure that we've defined using our composite types.
 
 There are a few steps to this, so let's start with a function signature that takes in a class id and returns a class:
@@ -126,6 +138,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 ```
+
+## Variables
 
 Now we'll need to define the variables we will use in order to retreive each key/node to build our composite class:
 (This'll make more sense once we actually use them)
@@ -141,6 +155,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 ```
+
+## Constructing a Composite Value / Explicit Type Casting
 
 Next, before we get into the difficult stuff, let's add our return statement. Here we'll use the `ROW()` function, along with explicit type casting (`::class`) to put our class together and return it. This might seem rather abstract at first, but under the hood, that's all a composite type is: a single row of field names and corresponding data types.
 
@@ -167,9 +183,15 @@ Note that the order of the values used is important and must always be the same 
 
 According to the docs, you actually can leave the `ROW` keyword out, as long as the composite type has more than one field. To do this, you remove `ROW` and leave the parentheses. You may also be able to leave out the explicit type-cast, since SQL will automatically cast the RETURN into the function's declared return type.
 
-Now you should be able to create the function and run it - however you'll get an empty class every time. All that's left now is to fill the data structure with query results from the database.
+Now you should be able to create the function and run it - however you'll get an empty class every time.
+
+## Filling the Composite Value With Query Results
+
+All that's left now is to fill the data structure with query results from the database.
 
 We'll take this one step at a time, assuming minimal knowledge of the language.
+
+### Subject
 
 First, let's get the subject:
 
@@ -197,6 +219,8 @@ $$ LANGUAGE plpgsql;
 ```
 
 `SELECT ... INTO` will assign the result of the query to whatever variable is specified, so that we can reference the result later on.
+
+### Teacher
 
 Now, let's get the teacher:
 
@@ -243,6 +267,8 @@ $$ LANGUAGE plpgsql;
 
 There's not much new here, just a potential subquery to get the teacher of the class. I'll keep the subquery since it's more concise.
 
+### Students
+
 Now we just need to get the students. This one is quite a bit more difficult, since we're dealing with a list of students. Here's how you do it:
 
 ```SQL
@@ -284,4 +310,8 @@ $$ LANGUAGE plpgsql;
 
 `ARRAY_AGG()` takes the results of the query and converts them into an array, so they are compatible with the array type of the students variable. `ROW(...)::person` converts each student into a composite person.
 
+## Done!
+
 Now we have a function that requires nothing more than a class id to bundle up a class with its teacher and students into a nice, nested, JSON-like structure.
+
+In order to invoke the function, run `SELECT * FROM read_entire_class(1)` and look at the beautifully nested results!
