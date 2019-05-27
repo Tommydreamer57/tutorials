@@ -29,8 +29,8 @@ CREATE TABLE classes (
 
 CREATE TABLE student_class_enrollments (
     student_id INTEGER REFERENCES people,
-    class_id INTEGER REFERENCES classes,
-    UNIQUE (student_id, class_id)
+    cid INTEGER REFERENCES classes,
+    UNIQUE (student_id, cid)
 );
 ```
 
@@ -59,10 +59,10 @@ VALUES
 -- enroll students in the class
 INSERT INTO student_class_enrollments (
     student_id,
-    class_id
+    cid
 )
 VALUES
-(2, 1,
+(2, 1),
 (3, 1),
 (4, 1);
 ```
@@ -72,7 +72,7 @@ Now if I wanted to retreive all the information about a class, I formerly would 
 ```SQL
 SELECT * FROM classes c
 LEFT JOIN people t ON t.id = c.teacher_id
-LEFT JOIN student_class_enrollments e ON e.class_id = c.id
+LEFT JOIN student_class_enrollments e ON e.cid = c.id
 LEFT JOIN people s ON s.id = e.student_id
 ```
 
@@ -119,7 +119,7 @@ Now we're ready to create a function that will output an entire class in the str
 There are a few steps to this, so let's start with a function signature that takes in a class id and returns a class:
 
 ```SQL
-CREATE OR REPLACE FUNCTION read_entire_class(id INTEGER)
+CREATE OR REPLACE FUNCTION read_entire_class(cid INTEGER)
 RETURNS class AS $$
 DECLARE
 BEGIN
@@ -131,7 +131,7 @@ Now we'll need to define the variables we will use in order to retreive each key
 (This'll make more sense once we actually use them)
 
 ```SQL
-CREATE OR REPLACE FUNCTION read_entire_class(id INTEGER)
+CREATE OR REPLACE FUNCTION read_entire_class(cid INTEGER)
 RETURNS class AS $$
 DECLARE
     subject TEXT;
@@ -145,7 +145,7 @@ $$ LANGUAGE plpgsql;
 Next, before we get into the difficult stuff, let's add our return statement. Here we'll use the `ROW()` function, along with explicit type casting (`::class`) to put our class together and return it. This might seem rather abstract at first, but under the hood, that's all a composite type is: a single row of field names and corresponding data types.
 
 ```SQL
-CREATE OR REPLACE FUNCTION read_entire_class(id INTEGER)
+CREATE OR REPLACE FUNCTION read_entire_class(cid INTEGER)
 RETURNS class AS $$
 DECLARE
     subject TEXT;
@@ -174,7 +174,7 @@ We'll take this one step at a time, assuming minimal knowledge of the language.
 First, let's get the subject:
 
 ```SQL
-CREATE OR REPLACE FUNCTION read_entire_class(id INTEGER)
+CREATE OR REPLACE FUNCTION read_entire_class(cid INTEGER)
 RETURNS class AS $$
 DECLARE
     subject TEXT;
@@ -184,10 +184,10 @@ BEGIN
 
     SELECT c.subject FROM classes c   -- selects `subject` from classes
     INTO subject                      -- assigns query result to variable `subject`
-    WHERE c.id = id;
+    WHERE c.id = cid;
 
     RETURN ROW(
-        id,
+        cid,
         subject,
         teacher,
         students
@@ -201,38 +201,38 @@ $$ LANGUAGE plpgsql;
 Now, let's get the teacher:
 
 ```SQL
-CREATE OR REPLACE FUNCTION read_entire_class(id INTEGER)
+CREATE OR REPLACE FUNCTION read_entire_class(cid INTEGER)
 RETURNS class AS $$
 DECLARE
     subject TEXT;
-    teacher_id INTEGER; -- add teacher_id variable
+    tid INTEGER; -- add teacher id variable
     teacher PERSON;
     students PERSON[];
 BEGIN
 
     SELECT c.subject FROM classes c
     INTO subject
-    WHERE c.id = id;
+    WHERE c.id = cid;
 
     -- EITHER --------
     SELECT t.id, t.first_name, t.last_name FROM people t
     INTO teacher
     WHERE t.id IN (                             -- subquery to select correct teacher
         SELECT c.teacher_id FROM classes c
-        WHERE c.id = id
+        WHERE c.id = cid
     );
     -- OR --------
     SELECT c.teacher_id FROM classes c          -- extra query to get `teacher_id` instead of using subquery
-    INTO teacher_id
-    WHERE c.id = id;
+    INTO tid
+    WHERE c.id = cid;
 
     SELECT t.id, t.first_name, t.last_name FROM people t
     INTO teacher
-    WHERE t.id = teacher_id;
+    WHERE t.id = tid;
     -- END OR ----
 
     RETURN ROW(
-        id,
+        cid,
         subject,
         teacher,
         students
@@ -243,12 +243,10 @@ $$ LANGUAGE plpgsql;
 
 There's not much new here, just a potential subquery to get the teacher of the class. I'll keep the subquery since it's more concise.
 
-Now we just need to get the students. This one is quite a bit more difficult, since we're dealing with a list of students that could be any length.
-
-First, we'll declare another variable to contain the 
+Now we just need to get the students. This one is quite a bit more difficult, since we're dealing with a list of students. Here's how you do it:
 
 ```SQL
-CREATE OR REPLACE FUNCTION read_entire_class(id INTEGER)
+CREATE OR REPLACE FUNCTION read_entire_class(cid INTEGER)
 RETURNS class AS $$
 DECLARE
     subject TEXT;
@@ -258,19 +256,24 @@ BEGIN
 
     SELECT c.subject FROM classes c
     INTO subject
-    WHERE c.id = id;
+    WHERE c.id = cid;
 
     SELECT t.id, t.first_name, t.last_name FROM people t
     INTO teacher
     WHERE t.id IN (
         SELECT c.teacher_id FROM classes c
-        WHERE c.id = id
+        WHERE c.id = cid
     );
 
-
+    SELECT ARRAY_AGG(ROW(s.id, s.first_name, s.last_name)::person) FROM people s
+    INTO students
+    WHERE s.id IN (
+        SELECT e.student_id FROM student_class_enrollments e
+        WHERE e.class_id = cid
+    );
 
     RETURN ROW(
-        id,
+        cid,
         subject,
         teacher,
         students
@@ -279,4 +282,6 @@ END;
 $$ LANGUAGE plpgsql;
 ```
 
+`ARRAY_AGG()` takes the results of the query and converts them into an array, so they are compatible with the array type of the students variable. `ROW(...)::person` converts each student into a composite person.
 
+Now we have a function that requires nothing more than a class id to bundle up a class with its teacher and students into a nice, nested, JSON-like structure.
